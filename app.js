@@ -11,7 +11,17 @@ app.post("/run-ui-workflow", async (req, res) => {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
 
-    await page.goto("https://trade-workflow-basic.vercel.app");
+    const username = process.env.BASIC_AUTH_USER;
+        const password = process.env.BASIC_AUTH_PASS;
+
+        const encodedUser = encodeURIComponent(username);
+        const encodedPass = encodeURIComponent(password);
+
+        const url = `https://${encodedUser}:${encodedPass}@trade-workflow-basic.vercel.app`;
+
+    await page.goto(url, { waitUntil: "domcontentloaded"} );
+
+    await page.waitForSelector("#f-symbol", { timeout: 60000 });
 
     // Fill form
     await page.fill("#f-symbol", payload.symbol);
