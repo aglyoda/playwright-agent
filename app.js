@@ -1,6 +1,7 @@
 const express = require("express");
 const { chromium } = require("playwright");
 const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
 
 const app = express();
 app.use(express.json());
