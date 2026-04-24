@@ -7,19 +7,37 @@ app.use(express.json());
 app.post("/run-ui-workflow", async (req, res) => {
   const payload = req.body;
 
+  let browser;
+
   try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    browser = await chromium.launch({ headless: true });
 
-    const username = process.env.BASIC_AUTH_USER;
-        const password = process.env.BASIC_AUTH_PASS;
+    const context = await browser.newContext({
+      httpCredentials: {
+        username: process.env.BASIC_AUTH_USER,
+        password: process.env.BASIC_AUTH_PASS
+      }
+    });
 
-        const encodedUser = encodeURIComponent(username);
-        const encodedPass = encodeURIComponent(password);
+    const page = await context.newPage();
 
-        const url = `https://${encodedUser}:${encodedPass}@trade-workflow-basic.vercel.app`;
+    // Debug failed requests
+    page.on("response", (response) => {
+      if (!response.ok()) {
+        console.log("Failed:", response.url(), response.status());
+      }
+    });
 
-    await page.goto(url, { waitUntil: "domcontentloaded"} );
+    // Capture trade creation API response
+    const tradeResponsePromise = page.waitForResponse((res) =>
+      res.url().includes("/api/trades") &&
+      res.request().method() === "POST"
+    );
+
+    // Navigate
+    await page.goto("https://trade-workflow-basic.vercel.app", {
+      waitUntil: "networkidle"
+    });
 
     await page.waitForSelector("#f-symbol", { timeout: 60000 });
 
@@ -29,38 +47,66 @@ app.post("/run-ui-workflow", async (req, res) => {
     await page.selectOption("#f-side", payload.side);
     await page.fill("#f-cp", payload.counterparty);
 
-    // Submit
+    console.log("Submitting trade...");
+
     await page.click('button[type="submit"]');
 
-    // Wait for table update
-    await page.waitForSelector("#trade-tbody tr");
+    // Get tradeId from network
+    const tradeResponse = await tradeResponsePromise;
+    const tradeData = await tradeResponse.json();
 
-    const tableText = await page.locator("#trade-tbody").innerText();
+    const tradeId = tradeData.trade_id;
+    console.log("Trade created:", tradeId);
 
-    // Extract tradeId
-    const match = tableText.match(/T\d+/);
-    const tradeId = match ? match[0] : null;
+    // Wait for UI update
+    await page.waitForSelector("#trade-tbody", { timeout: 60000 });
 
-    await browser.close();
+    // Wait until OUR trade appears
+    const myRow = page.locator(`#trade-tbody tr:has-text("${tradeId}")`);
+    await myRow.waitFor({ timeout: 60000 });
+
+    const myRowText = await myRow.innerText();
+
+    // Screenshot 1 → table
+    const tableScreenshot = `/tmp/${tradeId}-table.png`;
+    await page.screenshot({ path: tableScreenshot });
+
+    // Click "View JSON" for THIS row only
+    const viewJsonButton = myRow.locator('text=View JSON');
+    await viewJsonButton.click();
+
+    // Wait for JSON to appear (adjust selector if needed)
+    await page.waitForTimeout(1000);
+
+    // Screenshot 2 → JSON view
+    const jsonScreenshot = `/tmp/${tradeId}-json.png`;
+    await page.screenshot({ path: jsonScreenshot });
 
     return res.json({
       success: true,
       tradeId,
-      tableText
+      row: myRowText,
+      tableScreenshot,
+      jsonScreenshot
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("ERROR:", err);
 
     return res.status(500).json({
       success: false,
       error: err.message
     });
+
+  } finally {
+    if (browser) {
+      console.log("Closing browser...");
+      await browser.close();
+    }
   }
 });
 
-// Render uses this port
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
