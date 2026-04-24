@@ -5,6 +5,13 @@ const app = express();
 app.use(express.json());
 
 app.post("/run-ui-workflow", async (req, res) => {
+    const startTime = Date.now();
+  // API Key protection
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey !== process.env.API_KEY) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+
   const payload = req.body;
 
   let browser;
@@ -14,21 +21,21 @@ app.post("/run-ui-workflow", async (req, res) => {
 
     const context = await browser.newContext({
       httpCredentials: {
-        username: process.env.BASIC_AUTH_USER,
-        password: process.env.BASIC_AUTH_PASS
+        username: process.env.BASIC_AUTH_USER || "demo",
+        password: process.env.BASIC_AUTH_PASS || "Trade#2468"
       }
     });
 
     const page = await context.newPage();
 
-    // Debug failed requests
+    // Debug failed network calls
     page.on("response", (response) => {
       if (!response.ok()) {
         console.log("Failed:", response.url(), response.status());
       }
     });
 
-    // Capture trade creation API response
+    // Capture trade creation response
     const tradeResponsePromise = page.waitForResponse((res) =>
       res.url().includes("/api/trades") &&
       res.request().method() === "POST"
@@ -51,51 +58,55 @@ app.post("/run-ui-workflow", async (req, res) => {
 
     await page.click('button[type="submit"]');
 
-    // Get tradeId from network
+    // Get tradeId from backend response
     const tradeResponse = await tradeResponsePromise;
     const tradeData = await tradeResponse.json();
 
     const tradeId = tradeData.trade_id;
     console.log("Trade created:", tradeId);
 
-    // Wait for UI update
-    await page.waitForSelector("#trade-tbody", { timeout: 60000 });
-
-    // Wait until OUR trade appears
+    // Wait for row to appear in UI
     const myRow = page.locator(`#trade-tbody tr:has-text("${tradeId}")`);
     await myRow.waitFor({ timeout: 60000 });
 
     const myRowText = await myRow.innerText();
 
-    // Screenshot 1 → table
+    // Screenshot 1: Table
     const tableScreenshot = `/tmp/${tradeId}-table.png`;
     await page.screenshot({ path: tableScreenshot });
 
-    // Click "View JSON" for THIS row only
-    const viewJsonButton = myRow.locator('text=View JSON');
+    // Click "View JSON" for THIS row
+    const viewJsonButton = myRow.locator("text=View JSON");
     await viewJsonButton.click();
 
-    // Wait for JSON to appear (adjust selector if needed)
+    // Small wait for modal/render
     await page.waitForTimeout(1000);
 
-    // Screenshot 2 → JSON view
+    // Screenshot 2: JSON view
     const jsonScreenshot = `/tmp/${tradeId}-json.png`;
     await page.screenshot({ path: jsonScreenshot });
+
+    const endTime = Date.now(); 
+    const executionTime = endTime - startTime;
 
     return res.json({
       success: true,
       tradeId,
       row: myRowText,
       tableScreenshot,
-      jsonScreenshot
+      jsonScreenshot,
+      executionTimeMs: executionTime
     });
 
   } catch (err) {
+     const endTime = Date.now();
+    const executionTime = endTime - startTime;
     console.error("ERROR:", err);
 
     return res.status(500).json({
       success: false,
-      error: err.message
+      error: err.message,
+      executionTimeMs: executionTime
     });
 
   } finally {
