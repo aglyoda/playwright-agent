@@ -1,8 +1,15 @@
 const express = require("express");
 const { chromium } = require("playwright");
+const fs = require("fs");
 
 const app = express();
 app.use(express.json());
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 app.post("/run-ui-workflow", async (req, res) => {
     const startTime = Date.now();
@@ -74,6 +81,10 @@ app.post("/run-ui-workflow", async (req, res) => {
     // Screenshot 1: Table
     const tableScreenshot = `/tmp/${tradeId}-table.png`;
     await page.screenshot({ path: tableScreenshot });
+      const tableUpload = await cloudinary.uploader.upload(tableScreenshot, {
+  folder: "trade-workflow",
+  public_id: `${tradeId}-table`
+});
 
     // Click "View JSON" for THIS row
     const viewJsonButton = myRow.locator("text=View JSON");
@@ -85,16 +96,23 @@ app.post("/run-ui-workflow", async (req, res) => {
     // Screenshot 2: JSON view
     const jsonScreenshot = `/tmp/${tradeId}-json.png`;
     await page.screenshot({ path: jsonScreenshot });
+      const jsonUpload = await cloudinary.uploader.upload(jsonScreenshot, {
+  folder: "trade-workflow",
+  public_id: `${tradeId}-json`
+});
 
     const endTime = Date.now(); 
     const executionTime = endTime - startTime;
+
+      fs.unlinkSync(tableScreenshot);
+fs.unlinkSync(jsonScreenshot);
 
     return res.json({
       success: true,
       tradeId,
       row: myRowText,
-      tableScreenshot,
-      jsonScreenshot,
+      tableScreenshot: tableUpload.secure_url,
+  jsonScreenshot: jsonUpload.secure_url,
       executionTimeMs: executionTime
     });
 
